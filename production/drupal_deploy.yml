@@ -1,0 +1,46 @@
+---
+- hosts: drupalreleasehost
+  gather_facts: no
+  roles:
+  - { role: scripts,filename: "get_releases.sh", dest_path: '/data/releases'}
+
+- hosts: drupalhosts
+  gather_facts: no
+  user: tmooperator
+
+  pre_tasks:
+  - name: Check Variables
+    fail: msg="Please enter correct Params"
+    when: (main != "Yes" and main != "No") or (hotfix != "Yes" and hotfix != "No")
+  - name: Get releases
+    shell: "{{getreleases}} {{ application }} {{ release_version }} {{ releases }} "
+    run_once: true
+    when: (main == "Yes" or hotfix == "Yes") and inventory_hostname in groups['drupalreleasehost']
+    register: out
+    failed_when: out.rc != 0
+    changed_when: out.rc == 0
+  - debug: var=out.stdout_lines
+  - include: shieldUnshield.yml run_once=true shieldaction=shield
+    when: inventory_hostname in groups['drupalreleasehost']
+
+
+  roles:
+  - { role: drupal,releaseversion: "{{ release_version }}", scenario: 'main_no_hotfix', when: main == "Yes" and hotfix == "No" and application == "drupal" }
+  - { role: drupal,releaseversion: "{{ release_version }}", scenario: 'main_yes_hotfix', when: main == "Yes" and hotfix == "Yes" and application == "drupal" }
+  - { role: drupal,releaseversion: "{{ release_version }}", scenario: 'only_hotfix', when: main == "No" and hotfix == "Yes" and application == "drupal" }
+
+  post_tasks:
+  - name: Update Drupal Database
+    shell: "cd {{docroot}}/{{prodname}};drush updatedb -y"
+    when: main == "Yes" and inventory_hostname in groups['drupalreleasehost']
+  
+  - name: Restart Web server
+    command: sudo service httpd graceful
+
+  - include: shieldUnshield.yml run_once=true shieldaction=unshield
+    when: inventory_hostname in groups['drupalreleasehost']
+
+- hosts: nagios
+  gather_facts: no
+  tasks:
+  - include: sendMail.yml emailsubject="Drupal Release {{release_version}} Installed on Production" emailbody="Releases {{releases}} on Production"
