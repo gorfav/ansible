@@ -1,0 +1,56 @@
+---
+- hosts: sugarreleasehost
+  gather_facts: no
+  roles:
+  - { role: scripts,filename: "get_releases.sh", dest_path: '/data/releases'}
+
+- hosts: sugarreleasestop
+  gather_facts: no
+  tasks:
+  - name: Stop Apache Servers on second machine
+    command: sudo service httpd stop
+
+- hosts: sugarreleasehost
+  gather_facts: no
+  pre_tasks:
+  - name: Check Variables
+    fail: msg="Please enter correct Params"
+    when: (main != "Yes" and main != "No") or (hotfix != "Yes" and hotfix != "No")
+  - name: Get releases
+    shell: "{{getreleases}} {{ application }} {{ release_version }} {{ releases }} "
+    run_once: true
+    when: main == "Yes" or hotfix == "Yes"
+    register: out
+    failed_when: out.rc != 0
+    changed_when: out.rc == 0
+  - debug: var=out.stdout_lines
+
+  roles:
+  - { role: sugarcrm,releaseversion: "{{ release_version }}", scenario: 'main_yes_hotfix', when: main == "Yes" and hotfix == "Yes" and application == "sugarcrm" }
+  - { role: sugarcrm,releaseversion: "{{ release_version }}", scenario: 'main_no_hotfix', when: main == "Yes" and hotfix == "No" and application == "sugarcrm" }
+  - { role: sugarcrm,releaseversion: "{{ release_version }}", scenario: 'only_hotfix', when: main == "No" and hotfix == "Yes" and application == "sugarcrm" }
+  
+
+- hosts: sugarreleasestop
+  gather_facts: no
+  tasks:
+  - include_vars: /home/deploy/ansible/production/roles/sugarcrm/vars/main.yml
+  - name: Copy new docroot from ansible host to all other hosts for main release
+    sudo: yes
+    sudo_user: apache
+    synchronize: src="{{ansible_sugar_releases}}/prod.{{release_version}}" dest="{{sugarcrmroot}}" set_remote_user=no
+
+  - name: Change symlink
+    sudo: yes
+    sudo_user: apache
+    file: dest={{sugar_proddocroot}} src={{sugar_proddocroot}}.{{ release_version }} owner=apache group=apache state=link
+    when: main == "Yes"
+  
+  - name: Restart Apache
+    command: sudo service httpd restart
+    
+- hosts: nagios
+  tasks:
+  - name: Change ownership to deploy
+    sudo: yes
+    file: path="{{ansible_sugar_releases}}/prod.{{release_version}}" group=deploy owner=deploy recurse=yes

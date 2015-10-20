@@ -1,0 +1,38 @@
+- hosts: icreleasehost
+  gather_facts: no
+  roles:
+  - { role: scripts,filename: "get_releases.sh", dest_path: '/data/releases'}
+
+- hosts: icreleasehost
+  gather_facts: no
+  pre_tasks:
+  - name: Check Variables
+    fail: msg="Please enter correct Params"
+    when: (main != "Yes" and main != "No") or (hotfix != "Yes" and hotfix != "No")
+  - name: Get releases
+    shell: "{{getreleases}} {{ application }} {{ release_version }} {{ releases }} "
+    run_once: true
+    when: main == "Yes" or hotfix == "Yes"
+    register: out
+    failed_when: out.rc != 0
+    changed_when: out.rc == 0
+  - debug: var=out.stdout_lines
+
+  roles:
+  - { role: integration,releaseversion: "{{ release_version }}", scenario: 'main_yes_hotfix', when: main == "Yes" and hotfix == "Yes" and application == "integration" }
+  - { role: integration,releaseversion: "{{ release_version }}", scenario: 'main_no_hotfix', when: main == "Yes" and hotfix == "No" and application == "integration" }  
+  - { role: integration,releaseversion: "{{ release_version }}", scenario: 'only_hotfix', when: main == "No" and hotfix == "Yes" and application == "integration" }
+
+- hosts: ichosts
+  gather_facts: no
+  user: tmooperator
+  serial: 1
+
+  tasks:  
+  - name: Restart IC
+    command: sudo service nodejs-app restart
+
+- hosts: nagios
+  gather_facts: no
+  tasks:
+  - include: sendMail.yml emailsubject="IC Release {{release_version}} Installed on Production" emailbody="Releases {{releases}} on Production"

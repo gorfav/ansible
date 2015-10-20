@@ -1,0 +1,6 @@
+- name: send email
+  local_action: mail
+     from="anisble@t-mobile.nl"
+     to="{{emailrecipients}}"
+     subject="{{emailsubject}}"
+     body="{{emailbody}}"
