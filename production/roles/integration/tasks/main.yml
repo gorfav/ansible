@@ -1,0 +1,143 @@
+- name: List scenario
+  command: echo "{{ scenario }}"
+
+- name: Copy Current Environment Files
+  fetch: src={{icenvdir}}/{{item}} dest={{ic_role_dir}}/files flat=yes validate_checksum=no
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix" 
+  with_items: icenvfile  
+  register: out  
+- debug: var=out.stdout_lines
+
+- name: Get List of Main File
+  stat: path="{{icreleasedir}}/{{release_version}}/code-version-{{release_version}}.zip"
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix" 
+  register: mainfile
+- debug: var=mainfile.stat.path
+
+- name: Create Docroot
+  sudo: yes
+  sudo_user: apache
+  file:  path={{icdocroot}}.{{ release_version }} state=directory mode=0755  
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Copy Main File to /tmp
+  shell: "cp {{icreleasedir}}/{{ release_version }}/code-version-{{release_version}}.zip /tmp"
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Untar Main File to docroot
+  sudo: yes
+  sudo_user: apache
+  unarchive: src="/tmp/code-version-{{release_version}}.zip"
+             dest="{{icdocroot}}.{{ release_version }}"
+             copy=no
+             owner=apache
+             seuser=apache
+             follow=yes
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Remove Main file from /tmp
+  file:
+    path: "/tmp/code-version-{{release_version}}.zip"
+    state: absent
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"  
+  register: out
+- debug: var=out.stdout_lines
+
+- name: List HotFixes
+  shell: "find {{icreleasedir}}/{{ release_version }} -name \"*code-version-{{ release_version }}.*.zip\" -type f -printf \"%f\n\""
+  when: scenario == "main_yes_hotfix" or scenario == "only_hotfix"
+  register: hotfixlist
+- debug: var=hotfixlist.stdout_lines
+
+- name: Copy Hotfixes File to /tmp
+  shell: "cp {{icreleasedir}}/{{release_version}}/{{item}} /tmp"
+  when: scenario == "main_yes_hotfix" or scenario == "only_hotfix"
+  with_items: hotfixlist.stdout_lines
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Backup Files replaced by hotfixes
+  sudo: yes
+  sudo_user: apache
+  shell: "for i in `unzip -Z -1 /tmp/{{item}}`;do appendstr=`echo {{item}} | sed 's/.zip//'`;cp -n {{ icdocroot}}/$i {{ icdocroot}}/$i.$appendstr;done"
+  when: scenario == "only_hotfix"
+  with_items: hotfixlist.stdout_lines
+  ignore_errors: yes
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Backup Files replaced by hotfixes For Main Release
+  sudo: yes
+  sudo_user: apache
+  shell: "for i in `unzip -Z -1 /tmp/{{item}}`;do appendstr=`echo {{item}} | sed 's/.zip//'`;cp -n {{icdocroot}}.{{release_version }}/$i {{icdocroot}}.{{ release_version }}/$i.$appendstr;done"
+  when: scenario == "main_yes_hotfix"
+  with_items: hotfixlist.stdout_lines
+  ignore_errors: yes
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Untar Hotfixes File to new docroot
+  sudo: yes
+  sudo_user: apache
+  unarchive: src="/tmp/{{item}}"
+             dest="{{icdocroot}}.{{ release_version }}"
+             copy=no
+             follow=yes
+             owner=apache
+             seuser=apache
+  when: scenario == "main_yes_hotfix" 
+  with_items: hotfixlist.stdout_lines
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Untar Hotfixes File to current docroot For Hotfix Only scenario
+  sudo: yes
+  sudo_user: apache
+  unarchive: src="/tmp/{{item}}"
+             dest="{{icdocroot}}"
+             copy=no
+             follow=yes
+             owner=apache
+             seuser=apache
+  when: scenario == "only_hotfix"
+  with_items: hotfixlist.stdout_lines
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Remove Hotfixes file from /tmp
+  file:
+    path: "/tmp/{{item}}"
+    state: absent
+  when: scenario == "main_yes_hotfix" or scenario == "only_hotfix"
+  with_items: hotfixlist.stdout_lines
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Copy Env Files from Ansible to new DocRoot
+  sudo: yes
+  sudo_user: apache
+  copy: src="{{ic_role_dir}}/files/{{item}}" dest={{icdocroot}}.{{ release_version }}/{{item}} 
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix" 
+  with_items: icenvfile
+  register: out  
+- debug: var=out.stdout_lines
+
+- name: Run Make
+  command: make chdir={{icdocroot}}.{{release_version}}
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix" 
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Change SymLink to new release
+  sudo: yes
+  sudo_user: apache
+  file: dest={{icdocroot}} src="{{icdocroot}}.{{release_version}}" owner=apache group=apache state=link
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines

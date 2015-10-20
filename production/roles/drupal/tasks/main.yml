@@ -1,0 +1,157 @@
+---
+- name: List scenario
+  command: echo "{{ scenario }}"
+
+- name: Get List of Main File
+  shell: "ls -lrt {{ releasedir}}/{{ release_version }}/*{{ release_version }}.tar.gz"
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Copy Main File to /tmp
+  sudo: yes
+  sudo_user: apache
+  shell: "cp {{ releasedir}}/{{ release_version }}/site_{{ release_version }}.tar.gz {{ docroot }}"
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Untar Main File to docroot
+  sudo: yes
+  sudo_user: apache
+  shell: "cd {{ docroot }}; tar zxvf site_{{ release_version }}.tar.gz"
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Rename docrooot
+  sudo: yes
+  sudo_user: apache
+  shell: "mv {{ docroot }}/site_{{ release_version }} {{ docroot }}/{{prodname}}.{{ release_version }}"
+  register: out
+- debug: var=out.stdout_lines
+
+
+- name: Remove Main  file from /tmp
+  sudo: yes
+  sudo_user: apache
+  file:
+    path: "{{ docroot }}/site_{{ release_version }}.tar.gz"
+    state: absent
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Copy Latest Config Files to Ansible
+  sudo: yes
+  sudo_user: apache
+  shell: "cp {{ docroot }}/{{prodname}}/{{item}} {{ docroot }}/{{prodname}}.{{ release_version }}/{{item}}"
+  when: scenario == "main_yes_hotfix" or scenario == "main_no_hotfix"
+  with_items: configfiles
+  register: out
+- debug: var=out.stdout_lines
+
+- name: remove the detsination folder to be symlinked
+  sudo: yes
+  sudo_user: apache
+  file: path="{{ docroot }}/{{prodname}}.{{release_version}}/sites/default/{{item|basename}}" state=absent
+  when: scenario == "main_yes_hotfix" or scenario == "main_no_hotfix"
+  with_items: symlinks
+
+- name: Create Sym Links to provate files and files
+  sudo: yes
+  sudo_user: apache
+  file: src={{item}} dest="{{ docroot }}/{{prodname}}.{{release_version}}/sites/default/{{item|basename}}" owner=apache group=apache state=link force=yes
+  when: scenario == "main_yes_hotfix" or scenario == "main_no_hotfix"
+  with_items: symlinks
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Copy Memcache folder File to /tmp
+  sudo: yes
+  sudo_user: apache
+  shell: "cp -R {{ docroot }}/{{prodname}}/sites/all/modules/memcache {{ docroot }}/{{prodname}}.{{release_version}}/sites/all/modules"
+  when: scenario == "main_yes_hotfix" or scenario == "main_no_hotfix"
+  with_items: hotfixlist.stdout_lines
+  register: out
+- debug: var=out.stdout_lines
+
+- name: List HotFixes
+  shell: "find {{ releasedir}}/{{ release_version }} -name \"hotfix_{{ release_version }}.*.tar.gz\" -type f -printf \"%f\n\""
+  when: scenario == "main_yes_hotfix" or scenario == "only_hotfix"
+  register: hotfixlist
+- debug: var=hotfixlist.stdout_lines
+
+- name: Copy Hotfixes File to /tmp
+  sudo: yes
+  sudo_user: apache
+  shell: "cp {{ releasedir}}/{{ release_version }}/{{item}} {{ docroot }}"
+  when: scenario == "main_yes_hotfix" or scenario == "only_hotfix"
+  with_items: hotfixlist.stdout_lines
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Backup Files replaced by hotfixes
+  sudo: yes
+  sudo_user: apache
+  shell: "for i in `tar tvf {{ docroot }}/{{item}} | awk '{print  $6}'`;do appendstr=`echo {{item}} | sed 's/.tar.gz//'`;cp -n {{ docroot }}/{{prodname}}/$i {{ docroot }}/{{prodname}}/$i.$appendstr;done"
+  when: scenario == "only_hotfix"
+  with_items: hotfixlist.stdout_lines
+  ignore_errors: yes
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Backup Files replaced by hotfixes For Main Release
+  sudo: yes
+  sudo_user: apache
+  shell: "for i in `tar tvf {{docroot}}/{{item}} | awk '{print  $6}'`;do appendstr=`echo {{item}} | sed 's/.tar.gz//'`;cp -n {{ docroot }}/{{prodname}}.{{ release_version }}/$i {{ docroot }}/{{prodname}}.{{ release_version }}/$i.$appendstr;done"
+  when: scenario == "main_yes_hotfix"
+  with_items: hotfixlist.stdout_lines
+  ignore_errors: yes
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Untar Hotfixes File to new docroot
+  sudo: yes
+  sudo_user: apache
+  unarchive: src="{{docroot}}/{{item}}"
+             dest="{{ docroot }}/{{prodname}}.{{ release_version }}"
+             copy=no
+             follow=yes
+             owner=apache
+             seuser=apache
+  when: scenario == "main_yes_hotfix"
+  with_items: hotfixlist.stdout_lines
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Untar Hotfixes File to current docroot For Hotfix Only scenario
+  sudo: yes
+  sudo_user: apache
+  unarchive: src="{{docroot}}/{{item}}"
+             dest="{{ docroot }}/{{prodname}}"
+             copy=no
+             follow=yes
+             owner=apache
+             seuser=apache
+  when: scenario == "only_hotfix"
+  with_items: hotfixlist.stdout_lines
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Remove Hotfixes file from /tmp
+  file:
+    path: "{{docroot}}/{{item}}"
+    state: absent
+  when: scenario == "main_yes_hotfix" or scenario == "only_hotfix"
+  with_items: hotfixlist.stdout_lines
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Change SymLink to new release
+  sudo: yes
+  sudo_user: apache
+  file: dest={{docroot}}/{{prodname}} src="{{ docroot }}/{{prodname}}.{{release_version}}" owner=apache group=apache state=link
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines

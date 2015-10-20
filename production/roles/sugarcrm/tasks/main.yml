@@ -1,0 +1,223 @@
+- name: List scenario
+  command: echo "{{ scenario }}"
+
+- name: Copy Current Environment Files config_override.php
+  fetch: src="{{sugar_proddocroot}}/{{item}}" dest="{{sugar_role_dir}}/files" flat=yes validate_checksum=no
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix" 
+  with_items: sugar_files_to_copy
+  register: out
+- debug: var=out.stdout_lines
+  
+- name: Get List of Main File
+  stat: path="{{sugar_releasedir}}/{{release_version}}/code-version-{{release_version}}.zip"
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Create Docroot  
+  sudo: yes
+  sudo_user: apache
+  file:  path="{{sugar_proddocroot}}.{{ release_version }}" state=directory mode=0755
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Copy Main File to /tmp
+  shell: "cp {{sugar_releasedir}}/{{ release_version }}/code-version-{{ release_version }}.zip /tmp"
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Untar Main File to docroot
+  sudo: yes
+  sudo_user: apache
+  unarchive: src="/tmp/code-version-{{ release_version }}.zip"
+             dest="{{sugar_proddocroot}}.{{release_version}}"
+             copy=no
+             owner=apache
+             seuser=apache
+       follow=yes
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Remove Main file from /tmp
+  shell: "rm /tmp/code-version-{{ release_version }}.zip"
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Copy config files to docroot
+  sudo: yes
+  sudo_user: apache
+  copy: src={{sugar_role_dir}}/files/{{item}}  dest={{sugar_proddocroot}}.{{ release_version }}/{{item}}   
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  with_items: "{{sugar_files_to_copy}}"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: List HotFixes
+  shell: "find {{sugar_releasedir}}/{{ release_version }} -name \"*code-version-{{ release_version }}.*.zip\" -type f -printf \"%f\n\""
+  when: scenario == "main_yes_hotfix" or scenario == "only_hotfix"
+  register: hotfixlist
+- debug: var=hotfixlist.stdout_lines
+
+- name: Copy Hotfixes File to /tmp
+  shell: "cp {{sugar_releasedir}}/{{release_version}}/{{item}} /tmp"
+  when: scenario == "main_yes_hotfix" or scenario == "only_hotfix"
+  with_items: hotfixlist.stdout_lines
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Backup Files replaced by hotfixes only when hotfix
+  sudo: yes
+  sudo_user: apache
+  shell: "for i in `unzip -Z -1 /tmp/{{item}}`;do appendstr=`echo {{item}} | sed 's/.zip//'`;cp -n {{ sugar_proddocroot}}/$i {{ sugar_proddocroot}}/$i.$appendstr;done"
+  when: scenario == "only_hotfix"
+  with_items: hotfixlist.stdout_lines
+  ignore_errors: yes
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Backup Files replaced by hotfixes For Main Release
+  sudo: yes
+  sudo_user: apache
+  shell: "for i in `unzip -Z -1 /tmp/{{item}}`;do appendstr=`echo {{item}} | sed 's/.zip//'`;cp -n {{sugar_proddocroot}}.{{release_version }}/$i {{sugar_proddocroot}}.{{ release_version }}/$i.$appendstr;done"
+  when: scenario == "main_yes_hotfix"
+  with_items: hotfixlist.stdout_lines
+  ignore_errors: yes
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Untar Hotfixes File to new docroot
+  sudo: yes
+  sudo_user: apache
+  unarchive: src="/tmp/{{item}}"
+             dest="{{sugar_proddocroot}}.{{ release_version }}"
+             copy=no
+             follow=yes
+             owner=apache
+             seuser=apache
+  when: scenario == "main_yes_hotfix"
+  with_items: hotfixlist.stdout_lines
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Untar Hotfixes File to current docroot For Hotfix Only scenario
+  sudo: yes
+  sudo_user: apache
+  unarchive: src="/tmp/{{item}}"
+             dest="{{sugar_proddocroot}}"
+             copy=no
+             follow=yes
+             owner=apache
+             seuser=apache
+  when: scenario == "only_hotfix"
+  with_items: hotfixlist.stdout_lines
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Remove Hotfixes file from /tmp
+  file:
+    path: "/tmp/{{item}}"
+    state: absent
+  when: scenario == "main_yes_hotfix" or scenario == "only_hotfix"
+  with_items: hotfixlist.stdout_lines
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Remove Current Upload Folder
+  sudo: yes
+  sudo_user: apache
+  file: path="{{sugar_proddocroot}}.{{ release_version }}/upload" owner=apache group=apache state=absent
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: SymLink Upload Folder
+  sudo: yes
+  sudo_user: apache
+  file: src={{sugar_uploaddir}} dest="{{sugar_proddocroot}}.{{ release_version }}/upload" owner=apache group=apache state=link force=yes
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Get List of SQL to Execute
+  shell: "find {{sugar_releasedir}}/{{ release_version }} -name \"*to*.sql\""
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: sqlfiles
+- debug: var=sqlfiles.stdout_lines
+
+- name: Execute SQL
+  shell: 'mysql --user={{sugaruser}} --password={{sugarpassword}} --host={{sugarhost}} --port={{sugarport}} {{sugardb}} < {{item}}'
+  with_items: sqlfiles.stdout_lines
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Change SymLink to new release
+  sudo: yes
+  sudo_user: apache
+  file: dest={{sugar_proddocroot}} src={{sugar_proddocroot}}.{{ release_version }} owner=apache group=apache state=link
+  when: scenario == "main_no_hotfix" or scenario == "main_yes_hotfix"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Remove NL Locale if exists
+  sudo: yes
+  sudo_user: apache
+  lineinfile: dest={{sugar_proddocroot}}/{{sugar_config_override}} line="$sugar_config['default_language'] = 'nl_NL';" state=absent
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Change Locale to english
+  sudo: yes
+  sudo_user: apache
+  lineinfile: dest={{sugar_proddocroot}}/{{sugar_config_override}} insertbefore="CONFIGURATOR" line="$sugar_config['default_language'] = 'en_us';"
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Restart Apache
+  shell: "sudo service httpd graceful"  
+  register: out
+- debug: var=out.stdout_lines
+
+- name: R&R
+  sudo: yes
+  sudo_user: apache
+  shell: "/usr/bin/php {{sugarrepair}} {{sugar_proddocroot}}"  
+  with_sequence: count=3
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Remove EN Locale
+  sudo: yes
+  sudo_user: apache
+  lineinfile: dest={{sugar_proddocroot}}/{{sugar_config_override}}  line="$sugar_config['default_language'] = 'en_us';" state=absent
+  register: out
+- debug: var=out.stdout_lines
+
+- name: ADD NL Locale
+  sudo: yes
+  sudo_user: apache
+  lineinfile: dest={{sugar_proddocroot}}/{{sugar_config_override}} insertbefore="CONFIGURATOR" line="$sugar_config['default_language'] = 'nl_NL';"
+  register: out
+- debug: var=out.stdout_lines
+
+
+- name: Restart Apache
+  shell: "sudo service httpd graceful"  
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Copy new docroot to ansible host for main release
+  sudo: yes
+  sudo_user: apache
+  synchronize: mode=pull src="{{sugar_proddocroot}}.{{ release_version }}" dest="{{ansible_sugar_releases}}" set_remote_user=no 
+  register: out
+- debug: var=out.stdout_lines
+
+- name: Change owner to apache
+  sudo: yes
+  local_action: file path="{{ansible_sugar_releases}}/prod.{{release_version}}" owner=apache group=apache recurse=yes
+  register: out
+- debug: var=out.stdout_lines
