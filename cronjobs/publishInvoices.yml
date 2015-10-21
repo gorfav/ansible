@@ -1,0 +1,19 @@
+---
+- hosts: sugarshield
+  gather_facts: no
+  vars:
+    remote_user: tmooperator
+    finalizescript: /data/invoices/finalize.sh
+
+  tasks:
+  - name: Publish Bills
+    shell: "{{finalizescript}}"
+    register: out
+  - debug: var=out.stdout
+
+- hosts: nagios
+  gather_facts: no
+  tasks:
+  - name: send prowl
+    shell: '/usr/bin/perl /usr/local/bin/prowl.pl -application="Jenkins" -event="Inv Published" -notification="Inv Published" -priority=1 -apikey=92ee1a222b3a943ed6419a8cb9c03ffcc442d3ed'
+  - include: sendMail.yml emailsubject="Publish Invoices Job Run Succesfully" emailbody="Publish Invoices Job Run Succesfully"
