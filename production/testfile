@@ -1,4 +1,8 @@
 testing testing
 now second test
+<<<<<<< HEAD
 now test2
 now fourth test
+=======
+now third test
+>>>>>>> test
